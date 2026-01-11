@@ -438,5 +438,32 @@ ls D:/Bigdata/iceberg-warehouse/stock_db/stock_bronze/data/
 
 ---
 
+###Schema của bronze data
+```bash
+bronze_schema = StructType([
+    # Thông tin cổ phiếu
+    StructField("symbol", StringType(), False),           # Mã cổ phiếu (VD: AAPL, GOOGL)
+    
+    # Giá cổ phiếu
+    StructField("open", DoubleType(), True),              # Giá mở cửa
+    StructField("high", DoubleType(), True),              # Giá cao nhất
+    StructField("low", DoubleType(), True),               # Giá thấp nhất
+    StructField("close", DoubleType(), True),             # Giá đóng cửa
+    StructField("adj_close", DoubleType(), True),         # Giá đóng cửa điều chỉnh
+    
+    # Khối lượng giao dịch
+    StructField("volume", LongType(), True),              # Khối lượng giao dịch
+    
+    # Thời gian
+    StructField("timestamp", TimestampType(), False),     # Thời điểm lấy dữ liệu
+    StructField("date", StringType(), True),              # Ngày giao dịch (YYYY-MM-DD)
+    
+    # Metadata
+    StructField("ingestion_time", TimestampType(), False) # Thời gian nhập vào hệ thống
+])
+
+```
+
+
 _Last updated: 2024-01-15_
 _Version: 1.0 - Complete End-to-End Pipeline_
