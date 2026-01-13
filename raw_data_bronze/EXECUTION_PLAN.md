@@ -1,6 +1,8 @@
-# HƯỚNG DẪN CHẠY PIPELINE: YAHOO FINANCE → KAFKA → SPARK → ICEBERG BRONZE
+# HƯỚNG DẪN CHẠY PIPELINE: YAHOO FINANCE → KAFKA → SPARK → ICEBERG BRONZE (SPARK CHẠY LOCAL)
 
 > **Pipeline**: Thu thập dữ liệu cổ phiếu real-time từ Yahoo Finance → Kafka → Spark Streaming → Iceberg Bronze Layer
+>
+> Hạ tầng (Kafka, MinIO) chạy bằng Docker. Code (producer + Spark) chạy trực tiếp trên máy local.
 
 ---
 
@@ -59,31 +61,34 @@ winget install Microsoft.VCRedist.2010.x64
 
 ### 1. Tạo file docker-compose.yml
 
-**File đã có tại:** `D:/Bigdata/docker-compose.yml`
+**File đã có tại:** `d:/bigdata-stock-market-analysis/docker-compose.yml`
 
 **Nội dung:**
 
 ```yaml
 version: "3"
 services:
-  zookeeper:
-    image: confluentinc/cp-zookeeper:latest
-    environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-    ports:
-      - "2181:2181"
-
   kafka:
     image: confluentinc/cp-kafka:latest
-    depends_on:
-      - zookeeper
     ports:
       - "9092:9092"
     environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      # KRaft mode (no ZooKeeper)
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_KRAFT_CLUSTER_ID: "q1Sh-9_ISia_zwGINzRvyQ"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:29093"
+
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT"
+      KAFKA_LISTENERS: "INTERNAL://kafka:29092,EXTERNAL://0.0.0.0:9092,CONTROLLER://kafka:29093"
+      KAFKA_ADVERTISED_LISTENERS: "INTERNAL://kafka:29092,EXTERNAL://localhost:9092"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "INTERNAL"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
 
   minio:
     image: minio/minio:latest
@@ -99,8 +104,8 @@ services:
 ### 2. Khởi động Docker services
 
 ```bash
-cd D:/Bigdata
-docker-compose up -d
+cd d:/bigdata-stock-market-analysis
+docker compose up -d
 ```
 
 ### 3. Verify services đang chạy
@@ -114,7 +119,6 @@ docker ps
 ```
 NAMES       STATUS          PORTS
 kafka       Up X minutes    0.0.0.0:9092->9092/tcp
-zookeeper   Up X minutes    0.0.0.0:2181->2181/tcp
 minio       Up X minutes    0.0.0.0:9000-9001->9000-9001/tcp
 ```
 
@@ -149,7 +153,7 @@ Gửi vào Kafka topic `stock_ticks` mỗi 30 giây
 **Mở Terminal 1:**
 
 ```bash
-cd D:/Bigdata
+cd d:/bigdata-stock-market-analysis/raw_data_bronze
 python yahoo_to_kafka.py
 ```
 
@@ -184,7 +188,7 @@ Successfully sent 29 stocks to Kafka!
 **Mở Terminal mới (Terminal 2):**
 
 ```bash
-cd D:/Bigdata
+cd d:/bigdata-stock-market-analysis/raw_data_bronze
 spark-submit \
   --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.7 \
   kafka_to_spark.py
@@ -287,9 +291,15 @@ Tạo bảng stock_bronze với cột ingest_time và source
 **Chạy Phase 4:**
 
 ```bash
-cd D:/Bigdata
+cd d:/bigdata-stock-market-analysis/raw_data_bronze
 spark-submit \
-  --packages org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.5.0,org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.7 \
+  --packages org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.5.0,org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.7,org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.367 \
+  --conf spark.hadoop.fs.s3a.endpoint=http://localhost:9000 \
+  --conf spark.hadoop.fs.s3a.access.key=minioadmin \
+  --conf spark.hadoop.fs.s3a.secret.key=minioadmin \
+  --conf spark.hadoop.fs.s3a.path.style.access=true \
+  --conf spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem \
+  --conf spark.hadoop.fs.s3a.connection.ssl.enabled=false \
   spark_to_iceberg_bronze.py
 ```
 
@@ -348,9 +358,15 @@ Xác minh schema, partitions, và data quality
 **MỞ TERMINAL MỚI (thứ 3) để không làm gián đoạn Terminal 1 & 2**
 
 ```bash
-cd D:/Bigdata
+cd d:/bigdata-stock-market-analysis/raw_data_bronze
 spark-submit \
-  --packages org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.5.0 \
+  --packages org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.5.0,org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.367 \
+  --conf spark.hadoop.fs.s3a.endpoint=http://localhost:9000 \
+  --conf spark.hadoop.fs.s3a.access.key=minioadmin \
+  --conf spark.hadoop.fs.s3a.secret.key=minioadmin \
+  --conf spark.hadoop.fs.s3a.path.style.access=true \
+  --conf spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem \
+  --conf spark.hadoop.fs.s3a.connection.ssl.enabled=false \
   query_iceberg_bronze.py
 ````
 
@@ -366,7 +382,7 @@ Yahoo Finance → Kafka → Spark Streaming → Iceberg Bronze
 
 ```
 D:/Bigdata/
-├── docker-compose.yml              # Kafka + Zookeeper + MinIO
+├── docker-compose.yml              # Kafka (KRaft, no ZooKeeper) + MinIO
 ├── yahoo_to_kafka.py              # Phase 2: Producer
 ├── kafka_to_spark.py              # Phase 3: Test streaming
 ├── spark_to_iceberg_bronze.py     # Phase 4: Ghi vào Iceberg
@@ -439,31 +455,31 @@ ls D:/Bigdata/iceberg-warehouse/stock_db/stock_bronze/data/
 ---
 
 ###Schema của bronze data
+
 ```bash
 bronze_schema = StructType([
     # Thông tin cổ phiếu
     StructField("symbol", StringType(), False),           # Mã cổ phiếu (VD: AAPL, GOOGL)
-    
+
     # Giá cổ phiếu
     StructField("open", DoubleType(), True),              # Giá mở cửa
     StructField("high", DoubleType(), True),              # Giá cao nhất
     StructField("low", DoubleType(), True),               # Giá thấp nhất
     StructField("close", DoubleType(), True),             # Giá đóng cửa
     StructField("adj_close", DoubleType(), True),         # Giá đóng cửa điều chỉnh
-    
+
     # Khối lượng giao dịch
     StructField("volume", LongType(), True),              # Khối lượng giao dịch
-    
+
     # Thời gian
     StructField("timestamp", TimestampType(), False),     # Thời điểm lấy dữ liệu
     StructField("date", StringType(), True),              # Ngày giao dịch (YYYY-MM-DD)
-    
+
     # Metadata
     StructField("ingestion_time", TimestampType(), False) # Thời gian nhập vào hệ thống
 ])
 
 ```
-
 
 _Last updated: 2024-01-15_
 _Version: 1.0 - Complete End-to-End Pipeline_

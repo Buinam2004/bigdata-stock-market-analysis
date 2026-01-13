@@ -4,6 +4,7 @@ Yahoo Finance -> Kafka Streaming Producer
 - Gui moi ban ghi gia co phieu nhu 1 event vao Kafka
 """
 
+import os
 import time
 import json
 from datetime import datetime
@@ -13,53 +14,82 @@ from kafka import KafkaProducer
 # Danh sach stock symbols
 SYMBOLS = [
     # Technology
-    "AAPL", "MSFT", "GOOGL", "META", "NVDA",
-
+    "AAPL",
+    "MSFT",
+    "GOOGL",
+    "META",
+    "NVDA",
     # Banking
-    "JPM", "BAC", "WFC", "C", "GS",
-
+    "JPM",
+    "BAC",
+    "WFC",
+    "C",
+    "GS",
     # Energy
-    "XOM", "CVX", "BP", "SHEL",
-
+    "XOM",
+    "CVX",
+    "BP",
+    "SHEL",
     # Healthcare
-    "JNJ", "PFE", "MRK", "ABBV",
-
+    "JNJ",
+    "PFE",
+    "MRK",
+    "ABBV",
     # Retail
-    "AMZN", "WMT", "COST", "HD", "MCD",
-
+    "AMZN",
+    "WMT",
+    "COST",
+    "HD",
+    "MCD",
     # ETF
-    "SPY", "QQQ", "DIA"
+    "SPY",
+    "QQQ",
+    "DIA",
 ]
 
 # Mapping sector cho tung symbol
 SECTOR_MAP = {
     # Technology
-    "AAPL": "Technology", "MSFT": "Technology", "GOOGL": "Technology",
-    "META": "Technology", "NVDA": "Technology",
-
+    "AAPL": "Technology",
+    "MSFT": "Technology",
+    "GOOGL": "Technology",
+    "META": "Technology",
+    "NVDA": "Technology",
     # Banking
-    "JPM": "Banking", "BAC": "Banking", "WFC": "Banking",
-    "C": "Banking", "GS": "Banking",
-
+    "JPM": "Banking",
+    "BAC": "Banking",
+    "WFC": "Banking",
+    "C": "Banking",
+    "GS": "Banking",
     # Energy
-    "XOM": "Energy", "CVX": "Energy", "BP": "Energy", "SHEL": "Energy",
-
+    "XOM": "Energy",
+    "CVX": "Energy",
+    "BP": "Energy",
+    "SHEL": "Energy",
     # Healthcare
-    "JNJ": "Healthcare", "PFE": "Healthcare",
-    "MRK": "Healthcare", "ABBV": "Healthcare",
-
+    "JNJ": "Healthcare",
+    "PFE": "Healthcare",
+    "MRK": "Healthcare",
+    "ABBV": "Healthcare",
     # Retail
-    "AMZN": "Retail", "WMT": "Retail", "COST": "Retail",
-    "HD": "Retail", "MCD": "Retail",
-
+    "AMZN": "Retail",
+    "WMT": "Retail",
+    "COST": "Retail",
+    "HD": "Retail",
+    "MCD": "Retail",
     # ETF
-    "SPY": "ETF", "QQQ": "ETF", "DIA": "ETF"
+    "SPY": "ETF",
+    "QQQ": "ETF",
+    "DIA": "ETF",
 }
+
+# Get Kafka bootstrap servers from environment or default to localhost
+KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 
 # Khoi tao Kafka Producer
 producer = KafkaProducer(
-    bootstrap_servers="localhost:9092",
-    value_serializer=lambda v: json.dumps(v).encode("utf-8")
+    bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
+    value_serializer=lambda v: json.dumps(v).encode("utf-8"),
 )
 
 print("Kafka Producer initialized!")
@@ -92,7 +122,7 @@ def fetch_latest_price(symbol):
             "close": float(latest["Close"]),
             "volume": int(latest["Volume"]),
             "event_time": latest.name.to_pydatetime().isoformat(),
-            "source": "yahoo_finance"
+            "source": "yahoo_finance",
         }
 
     except Exception as e:
@@ -114,10 +144,10 @@ print("\nPress Ctrl+C to stop.\n")
 try:
     while True:
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Fetching data...")
-        
+
         success_count = 0
         fail_count = 0
-        
+
         for symbol in SYMBOLS:
             try:
                 event = fetch_latest_price(symbol)
@@ -128,7 +158,9 @@ try:
                     continue
 
                 producer.send("stock_ticks", event)
-                print(f"  [OK] {symbol:6s} | {event['sector']:10s} | ${event['close']:8.2f} | {event['event_time']}")
+                print(
+                    f"  [OK] {symbol:6s} | {event['sector']:10s} | ${event['close']:8.2f} | {event['event_time']}"
+                )
                 success_count += 1
 
             except Exception as e:
