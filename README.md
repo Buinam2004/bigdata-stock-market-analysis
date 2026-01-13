@@ -1,20 +1,89 @@
 # Bigdata Stock Market Analysis
 
-Real-time stock data pipeline using Kafka, Spark Streaming, Apache Iceberg, and MinIO.
+Real-time stock data pipeline with live technical analysis dashboard using Kafka, Spark Streaming, Apache Iceberg, MinIO, and Streamlit.
+
+## ⚡ Quick Start
+
+**Option 1: Automated Start (Windows)**
+
+```bash
+# One-click startup (opens 5 terminal windows)
+start_pipeline.bat
+```
+
+**Option 2: Manual Start**
+
+```bash
+# 1. Start infrastructure
+docker compose up -d
+
+# 2. Run in separate terminals:
+cd raw_data_bronze && python spark_to_iceberg_bronze.py
+cd processed_data_silver && python bronze_to_silver.py
+cd processed_data_gold && python silver_to_gold_streaming.py
+cd processed_data_gold && streamlit run dashboard.py  # Opens at http://localhost:8501
+```
+
+**Check Pipeline Status**
+
+```bash
+python check_pipeline_status.py
+```
+
+📖 **Detailed Guide**: See [QUICKSTART_DASHBOARD.md](QUICKSTART_DASHBOARD.md)
+
+---
+
+## 🎯 What You Get
+
+- **📊 Live Dashboard** at http://localhost:8501 with:
+
+  - Real-time candlestick charts
+  - Technical indicators (SMA, RSI, MACD, Bollinger Bands)
+  - Trading signals (BUY/SELL/HOLD)
+  - Sector performance analysis
+  - Auto-refresh every 5-60 seconds
+
+- **🔄 Real-time Streaming Pipeline**:
+
+  - Bronze Layer: Raw data ingestion
+  - Silver Layer: Data quality & validation
+  - Gold Layer: Technical indicators & signals
+
+- **📈 50+ Stock Symbols** tracked in real-time
+- **⚡ End-to-end latency**: 30-90 seconds
+- **🎨 Beautiful UI** with Streamlit and Plotly
+
+📚 **Full Feature List**: See [FEATURES.md](FEATURES.md)
+
+---
 
 ## Architecture
 
 ```
-Yahoo Finance API → Kafka → Spark Streaming → Iceberg (Bronze Layer) → MinIO (S3)
+Yahoo Finance → Kafka → Bronze Layer → Silver Layer → Gold Layer → Dashboard
+     API              (Raw Data)    (Cleansed)    (Analytics)   (Streamlit)
+                          ↓              ↓             ↓
+                      Iceberg        Iceberg       Iceberg
+                       MinIO          MinIO         MinIO
 ```
+
+### Data Layers (Medallion Architecture)
+
+- **Bronze Layer** 🥉: Raw, unprocessed data from sources (append-only)
+- **Silver Layer** 🥈: Cleansed, validated, deduplicated data (quality-checked)
+- **Gold Layer** 🥇: Aggregated analytics with technical indicators (business-ready)
+- **Dashboard** 📊: Real-time Streamlit UI with live charts and signals
 
 ## Tech Stack
 
 - **Kafka (KRaft mode)**: Message streaming (no ZooKeeper)
-- **Apache Spark**: Stream processing
-- **Apache Iceberg**: Data lakehouse table format
+- **Apache Spark**: Stream processing & technical indicators
+- **Apache Iceberg**: Data lakehouse table format with time-travel
 - **MinIO**: S3-compatible object storage
-- **Python**: Data ingestion and processing
+- **Streamlit**: Real-time analytics dashboard
+- **Plotly**: Interactive charts and visualizations
+- **Python**: Data ingestion, processing, and analytics
 
 ## Quick Start
 
@@ -54,7 +123,7 @@ docker exec kafka kafka-topics --create \
 
 ### 5. Run the pipeline locally (no containers for code)
 
-1) Copy env vars and install deps
+1. Copy env vars and install deps
 
 ```bash
 cp .env.example .env
@@ -62,7 +131,7 @@ cd raw_data_bronze
 pip install -r requirements.txt
 ```
 
-2) Export env vars
+2. Export env vars
 
 ```bash
 # PowerShell
@@ -77,14 +146,14 @@ $env:ICEBERG_WAREHOUSE="s3a://warehouse"
 $env:CHECKPOINT_LOCATION="./checkpoints/iceberg_bronze"
 ```
 
-3) Run producer locally
+3. Run producer locally
 
 ```bash
 cd raw_data_bronze
 python yahoo_to_kafka.py
 ```
 
-4) Run Spark streaming locally (new terminal)
+4. Run Spark streaming locally (new terminal)
 
 ```bash
 cd raw_data_bronze
@@ -99,7 +168,7 @@ spark-submit \
   spark_to_iceberg_bronze.py
 ```
 
-5) Query Iceberg locally (new terminal)
+5. Query Iceberg locally (new terminal)
 
 ```bash
 cd raw_data_bronze
@@ -125,6 +194,17 @@ spark-submit \
 │   ├── spark_to_iceberg_bronze.py # Main: Spark → Iceberg → MinIO
 │   ├── query_iceberg_bronze.py    # Query Iceberg tables
 │   └── requirements.txt
+├── processed_data_silver/
+│   ├── bronze_to_silver.py        # Silver: Data quality & cleansing
+│   ├── query_iceberg_silver.py    # Query Silver layer
+├── processed_data_gold/
+│   ├── silver_to_gold_streaming.py # Gold: Technical indicators & signals
+│   ├── dashboard.py               # Streamlit real-time dashboard
+│   ├── query_iceberg_gold.py      # Query Gold layer
+│   ├── requirements.txt
+│   └── README.md                  # Gold layer documentation
+│   ├── requirements.txt
+│   └── README.md                  # Silver layer documentation
 └── .env.example                    # Environment variables template
 ```
 
@@ -180,11 +260,139 @@ docker run --rm --network bigdata-stock-market-analysis_default \
 
 ## Data Flow
 
-1. **Producer** (`yahoo_to_kafka.py`) fetches stock prices from Yahoo Finance every 30 seconds
-2. **Kafka** receives and stores messages in the `stock_ticks` topic
-3. **Spark Streaming** (`spark_to_iceberg_bronze.py`) consumes from Kafka and writes to Iceberg
-4. **Iceberg** stores data in Bronze layer with schema and time-travel capabilities
-5. **MinIO** provides S3-compatible object storage for Iceberg data files
+### Complete Real-time Streaming Pipeline
+
+```
+┌─────────────────┐
+│  Yahoo Finance  │
+│      API        │
+└────────┬────────┘
+         │ 30s interval
+         ▼
+┌─────────────────┐
+│     Kafka       │
+│  stock_ticks    │
+└────────┬────────┘
+         │ streaming
+         ▼
+┌─────────────────────────────────────────────────────┐
+│              Bronze Layer (Raw Data)                │
+│  • Append-only ingestion                            │
+│  • No transformations                               │
+│  • Time-travel enabled                              │
+└────────┬────────────────────────────────────────────┘
+         │ streaming
+         ▼
+┌─────────────────────────────────────────────────────┐
+│           Silver Layer (Data Quality)               │
+│  • Price & volume validation                        │
+│  • Deduplication                                    │
+│  • Anomaly detection                                │
+│  • Missing value imputation                         │
+└────────┬────────────────────────────────────────────┘
+         │ streaming (15s batches)
+         ▼
+┌─────────────────────────────────────────────────────┐
+│        Gold Layer (Technical Analytics)             │
+│  • Moving Averages (SMA 5, 20, 50)                  │
+│  • RSI (Relative Strength Index)                    │
+│  • MACD & Signal Line                               │
+│  • Bollinger Bands                                  │
+│  • Trading Signals (Buy/Sell/Hold)                  │
+└────────┬────────────────────────────────────────────┘
+         │ real-time query
+         ▼
+┌─────────────────────────────────────────────────────┐
+│         Streamlit Dashboard (Live UI)               │
+│  • Real-time candlestick charts                     │
+│  • Technical indicator overlays                     │
+│  • Trading signals table                            │
+│  • Sector performance                               │
+│  • Auto-refresh (5-60s)                             │
+└─────────────────────────────────────────────────────┘
+```
+
+### Running the Complete Pipeline
+
+**Terminal 1: Bronze Layer (Raw Ingestion)**
+
+```bash
+cd raw_data_bronze
+python spark_to_iceberg_bronze.py
+```
+
+**Terminal 2: Silver Layer (Data Quality)**
+
+```bash
+cd processed_data_silver
+python bronze_to_silver.py
+```
+
+**Terminal 3: Gold Layer (Technical Indicators)** 🆕
+
+```bash
+cd processed_data_gold
+python silver_to_gold_streaming.py
+```
+
+**Terminal 4: Real-time Dashboard** 🆕
+
+```bash
+cd processed_data_gold
+streamlit run dashboard.py
+# Opens at http://localhost:8501
+```
+
+**Terminal 5: Producer (if not running)**
+
+```bash
+cd raw_data_bronze
+python yahoo_to_kafka.py
+```
+
+### Dashboard Features 📊
+
+The Streamlit dashboard provides:
+
+- **📈 Live Market Overview**: Total stocks, Buy/Sell/Hold signals, Average RSI
+- **🎯 Trading Signals Table**: Color-coded recommendations with price changes
+- **📊 Technical Charts**: Interactive candlestick charts with:
+  - Bollinger Bands overlay
+  - Moving Averages (SMA 5, 20, 50)
+  - Volume bars
+  - RSI indicator with oversold/overbought levels
+- **📉 MACD Charts**: MACD line, signal line, and histogram
+- **🏢 Sector Performance**: Aggregated metrics by sector
+- **🔄 Auto-refresh**: Configurable refresh interval (5-60 seconds)
+- **🎛️ Filters**: Select specific symbols and sectors
+
+See detailed documentation:
+
+- [Silver Layer README](processed_data_silver/README.md)
+- [Gold Layer README](processed_data_gold/README.md)
+
+## Query Data
+
+**Bronze Layer**:
+
+```bash
+cd raw_data_bronze
+python query_iceberg_bronze.py
+```
+
+**Silver Layer**:
+
+```bash
+cd processed_data_silver
+python query_iceberg_silver.py
+```
+
+**Gold Layer** 🆕:
+
+```bash
+cd processed_data_gold
+python query_iceberg_gold.py
+```
 
 ## Stop Services
 

@@ -1,0 +1,4 @@
+pyspark==3.5.7
+streamlit==1.30.0
+plotly==5.18.0
+pandas==2.1.4
