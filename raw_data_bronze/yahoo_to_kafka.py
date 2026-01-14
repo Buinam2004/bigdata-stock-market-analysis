@@ -113,6 +113,10 @@ def fetch_latest_price(symbol):
         if latest.isnull().any():
             return None
 
+        # Use current time instead of candle timestamp for real-time uniqueness
+        # This ensures each fetch has a unique event_time for proper windowing
+        current_time = datetime.now()
+
         return {
             "symbol": symbol,
             "sector": SECTOR_MAP.get(symbol, "Unknown"),
@@ -121,7 +125,7 @@ def fetch_latest_price(symbol):
             "low": float(latest["Low"]),
             "close": float(latest["Close"]),
             "volume": int(latest["Volume"]),
-            "event_time": latest.name.to_pydatetime().isoformat(),
+            "event_time": current_time.isoformat(),  # Use current time for uniqueness
             "source": "yahoo_finance",
         }
 
@@ -131,13 +135,13 @@ def fetch_latest_price(symbol):
 
 
 # Thoi gian sleep giua cac lan fetch (giay)
-SLEEP_TIME = 30
+SLEEP_TIME = 5  # Reduced to 1 second for near real-time
 
 print("=" * 60)
 print("START STREAMING STOCK DATA TO KAFKA")
 print(f"Topic: stock_ticks")
 print(f"Symbols: {len(SYMBOLS)} stocks")
-print(f"Interval: {SLEEP_TIME} seconds")
+print(f"Interval: {SLEEP_TIME} second(s)")
 print("=" * 60)
 print("\nPress Ctrl+C to stop.\n")
 

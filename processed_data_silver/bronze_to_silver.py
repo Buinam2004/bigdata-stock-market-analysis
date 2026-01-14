@@ -268,13 +268,13 @@ print("=" * 80)
 silver_query = (
     bronze_stream.writeStream.foreachBatch(process_silver_batch)
     .option("checkpointLocation", CHECKPOINT_LOCATION)
-    .trigger(processingTime="10 seconds")  # Process every 10 seconds
+    .trigger(processingTime="1 second")  # Minimum supported micro-batch interval
     .start()
 )
 
 print("\n✓ Silver Layer streaming query STARTED!")
 print(f"  Query ID: {silver_query.id}")
-print(f"  Processing interval: 10 seconds")
+print(f"  Processing interval: 1 second")
 print(f"  Output: stock_db.stock_silver")
 print("\n" + "=" * 80)
 print("Press Ctrl+C to stop.")

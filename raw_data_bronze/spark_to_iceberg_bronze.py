@@ -126,6 +126,7 @@ bronze_query = (
     bronze_df.writeStream.format("iceberg")
     .outputMode("append")
     .option("checkpointLocation", CHECKPOINT_LOCATION)
+    .trigger(processingTime="1 second")  # Process immediately
     .toTable("stock_bronze")
 )
 

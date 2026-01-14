@@ -188,14 +188,24 @@ def process_gold_batch(batch_df, batch_id):
     # Filter only valid records from Silver
     df = batch_df.filter(
         (col("is_valid_price") == True) & (col("is_complete_record") == True)
-    ).select("symbol", "sector", "event_time", "open", "high", "low", "close", "volume")
+    ).select(
+        "symbol",
+        "sector",
+        "event_time",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "ingest_time",
+    )
 
     if df.isEmpty():
         print(f"  ⚠ No valid records to process")
         return
 
-    # Define window specifications
-    symbol_window = Window.partitionBy("symbol").orderBy("event_time")
+    # Define window specifications - Use ingest_time for proper ordering since event_time may be same
+    symbol_window = Window.partitionBy("symbol").orderBy("ingest_time")
 
     # Window for last N rows
     window_5 = symbol_window.rowsBetween(-4, 0)
@@ -211,7 +221,7 @@ def process_gold_batch(batch_df, batch_id):
         .withColumn(
             "ema_12",
             avg("close").over(
-                Window.partitionBy("symbol").orderBy("event_time").rowsBetween(-11, 0)
+                Window.partitionBy("symbol").orderBy("ingest_time").rowsBetween(-11, 0)
             ),
         )
     )
@@ -231,6 +241,8 @@ def process_gold_batch(batch_df, batch_id):
 
     # Step 3: Calculate RSI (Relative Strength Index)
     print(f"  📈 Calculating RSI...")
+    window_14 = Window.partitionBy("symbol").orderBy("ingest_time").rowsBetween(-13, 0)
+
     df_rsi = (
         df_changes.withColumn(
             "gain", when(col("price_change") > 0, col("price_change")).otherwise(0)
@@ -238,31 +250,26 @@ def process_gold_batch(batch_df, batch_id):
         .withColumn(
             "loss", when(col("price_change") < 0, -col("price_change")).otherwise(0)
         )
-        .withColumn(
-            "avg_gain",
-            avg("gain").over(
-                Window.partitionBy("symbol").orderBy("event_time").rowsBetween(-13, 0)
-            ),
-        )
-        .withColumn(
-            "avg_loss",
-            avg("loss").over(
-                Window.partitionBy("symbol").orderBy("event_time").rowsBetween(-13, 0)
-            ),
-        )
+        .withColumn("avg_gain", avg("gain").over(window_14))
+        .withColumn("avg_loss", avg("loss").over(window_14))
         .withColumn(
             "rs",
-            when(col("avg_loss") > 0, col("avg_gain") / col("avg_loss")).otherwise(100),
+            when(
+                (col("avg_loss") > 0.0001) & (col("avg_gain").isNotNull()),
+                col("avg_gain") / col("avg_loss"),
+            ).otherwise(0),
         )
-        .withColumn("rsi_14", 100 - (100 / (1 + col("rs"))))
+        .withColumn(
+            "rsi_14", when(col("rs") > 0, 100 - (100 / (1 + col("rs")))).otherwise(50)
+        )
         .drop("gain", "loss", "avg_gain", "avg_loss", "rs")
     )
 
     # Step 4: Calculate MACD
     print(f"  📉 Calculating MACD...")
-    window_12 = Window.partitionBy("symbol").orderBy("event_time").rowsBetween(-11, 0)
-    window_26 = Window.partitionBy("symbol").orderBy("event_time").rowsBetween(-25, 0)
-    window_9 = Window.partitionBy("symbol").orderBy("event_time").rowsBetween(-8, 0)
+    window_12 = Window.partitionBy("symbol").orderBy("ingest_time").rowsBetween(-11, 0)
+    window_26 = Window.partitionBy("symbol").orderBy("ingest_time").rowsBetween(-25, 0)
+    window_9 = Window.partitionBy("symbol").orderBy("ingest_time").rowsBetween(-8, 0)
 
     df_macd = (
         df_rsi.withColumn("ema_12_temp", avg("close").over(window_12))
@@ -348,6 +355,7 @@ def process_gold_batch(batch_df, batch_id):
             .otherwise("HOLD"),
         )
         .withColumn("processed_time", current_timestamp())
+        .drop("ingest_time")  # Drop helper column before writing to gold table
     )
 
     # Step 10: Quality metrics for this batch
@@ -394,13 +402,13 @@ print("=" * 80)
 gold_query = (
     silver_stream.writeStream.foreachBatch(process_gold_batch)
     .option("checkpointLocation", CHECKPOINT_LOCATION)
-    .trigger(processingTime="15 seconds")  # Process every 15 seconds
+    .trigger(processingTime="2 seconds")  # Process every 2 seconds for near real-time
     .start()
 )
 
 print("\n✓ Gold Layer streaming query STARTED!")
 print(f"  Query ID: {gold_query.id}")
-print(f"  Processing interval: 15 seconds")
+print(f"  Processing interval: 2 seconds")
 print(f"  Output: stock_db.stock_gold_realtime")
 print("\n" + "=" * 80)
 print("📊 Real-time Technical Indicators Active!")

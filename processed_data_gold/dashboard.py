@@ -92,6 +92,10 @@ def get_spark_session():
         .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "false")
         .config("spark.driver.memory", "1g")
         .config("spark.ui.enabled", "false")
+        # Avoid port conflicts with other Spark apps
+        .config("spark.driver.port", "0")  # Use random available port
+        .config("spark.driver.blockManager.port", "0")  # Random BlockManager port
+        .config("spark.port.maxRetries", "100")  # Try many ports if needed
         .getOrCreate()
     )
     spark.sparkContext.setLogLevel("ERROR")
@@ -103,6 +107,9 @@ def load_gold_data(limit=1000):
     """Load latest data from Gold Iceberg table"""
     spark = get_spark_session()
     try:
+        # Refresh table metadata to get latest snapshot
+        spark.sql("REFRESH TABLE stock_gold_realtime")
+
         df = (
             spark.read.format("iceberg")
             .table("stock_gold_realtime")
@@ -119,6 +126,9 @@ def load_latest_by_symbol(symbols=None):
     """Load the most recent record for each symbol"""
     spark = get_spark_session()
     try:
+        # Refresh table metadata to get latest snapshot
+        spark.sql("REFRESH TABLE stock_gold_realtime")
+
         query = """
         SELECT *
         FROM (
@@ -348,7 +358,7 @@ with st.sidebar:
     st.header("⚙️ Dashboard Settings")
 
     auto_refresh = st.checkbox("🔄 Auto-refresh", value=True)
-    refresh_interval = st.slider("Refresh interval (seconds)", 5, 60, 10)
+    refresh_interval = st.slider("Refresh interval (seconds)", 10, 60, 10)
 
     st.markdown("---")
     st.header("📊 Data Filters")
