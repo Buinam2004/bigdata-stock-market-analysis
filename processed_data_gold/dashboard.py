@@ -122,6 +122,57 @@ def load_gold_data(limit=1000):
         return pd.DataFrame()
 
 
+def load_historical_data(start_date=None, end_date=None, symbols=None, sectors=None):
+    """Load historical data from Gold Iceberg table with date range filters"""
+    spark = get_spark_session()
+    try:
+        # Refresh table metadata to get latest snapshot
+        spark.sql("REFRESH TABLE stock_gold_realtime")
+
+        # Build query with filters
+        query = "SELECT * FROM stock_gold_realtime WHERE 1=1"
+
+        if start_date:
+            query += f" AND event_time >= '{start_date}'"
+        if end_date:
+            query += f" AND event_time <= '{end_date}'"
+        if symbols:
+            symbol_list = "','".join(symbols)
+            query += f" AND symbol IN ('{symbol_list}')"
+        if sectors:
+            sector_list = "','".join(sectors)
+            query += f" AND sector IN ('{sector_list}')"
+
+        query += " ORDER BY event_time DESC"
+
+        df = spark.sql(query)
+        return df.toPandas()
+    except Exception as e:
+        st.error(f"Error loading historical data: {e}")
+        return pd.DataFrame()
+
+
+def get_date_range_stats():
+    """Get the date range of available data"""
+    spark = get_spark_session()
+    try:
+        spark.sql("REFRESH TABLE stock_gold_realtime")
+        query = """
+        SELECT 
+            MIN(event_time) as min_date,
+            MAX(event_time) as max_date,
+            COUNT(*) as total_records
+        FROM stock_gold_realtime
+        """
+        result = spark.sql(query).toPandas()
+        if not result.empty:
+            return result.iloc[0].to_dict()
+        return {"min_date": None, "max_date": None, "total_records": 0}
+    except Exception as e:
+        st.error(f"Error getting date range: {e}")
+        return {"min_date": None, "max_date": None, "total_records": 0}
+
+
 def load_latest_by_symbol(symbols=None):
     """Load the most recent record for each symbol"""
     spark = get_spark_session()
@@ -342,6 +393,126 @@ def create_macd_chart(df, symbol):
     return fig
 
 
+def create_historical_trend_chart(df, symbols, metric="close"):
+    """Create historical trend comparison chart for multiple symbols"""
+    fig = go.Figure()
+
+    for symbol in symbols:
+        df_symbol = df[df["symbol"] == symbol].sort_values("event_time")
+        if not df_symbol.empty and metric in df_symbol.columns:
+            fig.add_trace(
+                go.Scatter(
+                    x=df_symbol["event_time"],
+                    y=df_symbol[metric],
+                    name=symbol,
+                    mode="lines",
+                    line=dict(width=2),
+                )
+            )
+
+    metric_names = {
+        "close": "Price",
+        "rsi_14": "RSI",
+        "volume": "Volume",
+        "price_change_pct": "Price Change %",
+        "signal_score": "Signal Score",
+    }
+
+    fig.update_layout(
+        title=f"Historical {metric_names.get(metric, metric)} Comparison",
+        xaxis_title="Time",
+        yaxis_title=metric_names.get(metric, metric),
+        hovermode="x unified",
+        template="plotly_white",
+        height=500,
+    )
+
+    return fig
+
+
+def create_signal_distribution_chart(df):
+    """Create chart showing distribution of trading signals over time"""
+    # Group by date and recommendation
+    df["date"] = pd.to_datetime(df["event_time"]).dt.date
+    signal_counts = (
+        df.groupby(["date", "recommendation"]).size().reset_index(name="count")
+    )
+
+    fig = go.Figure()
+
+    for rec in ["STRONG BUY", "BUY", "HOLD", "SELL", "STRONG SELL"]:
+        data = signal_counts[signal_counts["recommendation"] == rec]
+        if not data.empty:
+            color = {
+                "STRONG BUY": "#00C851",
+                "BUY": "#7FD47F",
+                "HOLD": "#ffbb33",
+                "SELL": "#FF9999",
+                "STRONG SELL": "#ff4444",
+            }.get(rec, "gray")
+
+            fig.add_trace(
+                go.Bar(
+                    x=data["date"],
+                    y=data["count"],
+                    name=rec,
+                    marker_color=color,
+                )
+            )
+
+    fig.update_layout(
+        title="Historical Trading Signal Distribution",
+        xaxis_title="Date",
+        yaxis_title="Number of Signals",
+        barmode="stack",
+        template="plotly_white",
+        height=400,
+    )
+
+    return fig
+
+
+def calculate_historical_metrics(df, symbol):
+    """Calculate historical performance metrics for a symbol"""
+    df_symbol = df[df["symbol"] == symbol].sort_values("event_time")
+
+    if df_symbol.empty:
+        return {}
+
+    metrics = {
+        "total_records": len(df_symbol),
+        "date_range": f"{df_symbol['event_time'].min()} to {df_symbol['event_time'].max()}",
+        "price_start": df_symbol.iloc[0]["close"],
+        "price_end": df_symbol.iloc[-1]["close"],
+        "price_change": df_symbol.iloc[-1]["close"] - df_symbol.iloc[0]["close"],
+        "price_change_pct": (
+            (df_symbol.iloc[-1]["close"] - df_symbol.iloc[0]["close"])
+            / df_symbol.iloc[0]["close"]
+            * 100
+        ),
+        "price_high": df_symbol["high"].max(),
+        "price_low": df_symbol["low"].min(),
+        "avg_volume": df_symbol["volume"].mean(),
+        "avg_rsi": df_symbol["rsi_14"].mean(),
+        "buy_signals": len(
+            df_symbol[df_symbol["recommendation"].isin(["BUY", "STRONG BUY"])]
+        ),
+        "sell_signals": len(
+            df_symbol[df_symbol["recommendation"].isin(["SELL", "STRONG SELL"])]
+        ),
+        "hold_signals": len(df_symbol[df_symbol["recommendation"] == "HOLD"]),
+        "golden_crosses": df_symbol["golden_cross"].sum(),
+        "death_crosses": df_symbol["death_cross"].sum(),
+        "volatility_avg": (
+            df_symbol["volatility_20"].mean()
+            if "volatility_20" in df_symbol.columns
+            else 0
+        ),
+    }
+
+    return metrics
+
+
 # ========================================
 # Main Dashboard
 # ========================================
@@ -357,8 +528,16 @@ st.markdown("---")
 with st.sidebar:
     st.header("⚙️ Dashboard Settings")
 
-    auto_refresh = st.checkbox("🔄 Auto-refresh", value=True)
-    refresh_interval = st.slider("Refresh interval (seconds)", 10, 60, 10)
+    # View mode selection
+    view_mode = st.radio(
+        "View Mode", options=["Real-Time", "Historical Analysis"], index=0
+    )
+
+    auto_refresh = st.checkbox("🔄 Auto-refresh", value=(view_mode == "Real-Time"))
+    if auto_refresh:
+        refresh_interval = st.slider("Refresh interval (seconds)", 10, 60, 10)
+    else:
+        refresh_interval = 10
 
     st.markdown("---")
     st.header("📊 Data Filters")
@@ -382,8 +561,83 @@ with st.sidebar:
         selected_symbols = []
         selected_sectors = []
 
+    # Historical data filters
+    if view_mode == "Historical Analysis":
+        st.markdown("---")
+        st.header("📅 Historical Data Range")
+
+        # Get available date range
+        date_stats = get_date_range_stats()
+
+        if date_stats["min_date"] and date_stats["max_date"]:
+            st.caption(f"Data available: {date_stats['total_records']:,} records")
+            st.caption(f"From: {date_stats['min_date']}")
+            st.caption(f"To: {date_stats['max_date']}")
+
+            # Date range selector with minute-level granularity
+            date_range_option = st.selectbox(
+                "Time Period",
+                options=[
+                    "Last 5 Minutes",
+                    "Last 10 Minutes",
+                    "Last 15 Minutes",
+                    "Last 30 Minutes",
+                    "Last Hour",
+                    "Last 2 Hours",
+                    "Last 6 Hours",
+                    "Last 24 Hours",
+                    "Last 7 Days",
+                    "Last 30 Days",
+                    "All Time",
+                    "Custom Range",
+                ],
+                index=4,  # Default to "Last Hour"
+            )
+
+            if date_range_option == "Custom Range":
+                col1, col2 = st.columns(2)
+                with col1:
+                    start_date = st.date_input(
+                        "Start Date",
+                        value=pd.to_datetime(date_stats["min_date"]).date(),
+                    )
+                with col2:
+                    end_date = st.date_input(
+                        "End Date", value=pd.to_datetime(date_stats["max_date"]).date()
+                    )
+            else:
+                end_date = datetime.now()
+                if date_range_option == "Last 5 Minutes":
+                    start_date = end_date - timedelta(minutes=5)
+                elif date_range_option == "Last 10 Minutes":
+                    start_date = end_date - timedelta(minutes=10)
+                elif date_range_option == "Last 15 Minutes":
+                    start_date = end_date - timedelta(minutes=15)
+                elif date_range_option == "Last 30 Minutes":
+                    start_date = end_date - timedelta(minutes=30)
+                elif date_range_option == "Last Hour":
+                    start_date = end_date - timedelta(hours=1)
+                elif date_range_option == "Last 2 Hours":
+                    start_date = end_date - timedelta(hours=2)
+                elif date_range_option == "Last 6 Hours":
+                    start_date = end_date - timedelta(hours=6)
+                elif date_range_option == "Last 24 Hours":
+                    start_date = end_date - timedelta(days=1)
+                elif date_range_option == "Last 7 Days":
+                    start_date = end_date - timedelta(days=7)
+                elif date_range_option == "Last 30 Days":
+                    start_date = end_date - timedelta(days=30)
+                else:  # All Time
+                    start_date = pd.to_datetime(date_stats["min_date"])
+                    end_date = pd.to_datetime(date_stats["max_date"])
+        else:
+            st.warning("No historical data available")
+            start_date = None
+            end_date = None
+            date_range_option = "All Time"
+
     st.markdown("---")
-    st.info("💡 **Tip**: Select specific symbols for detailed analysis")
+    st.info("💡 **Tip**: Switch between Real-Time and Historical views")
 
 # Create placeholder for auto-refresh
 placeholder = st.empty()
@@ -391,223 +645,446 @@ placeholder = st.empty()
 # Main loop
 while True:
     with placeholder.container():
-        # Load fresh data
-        df_all = load_gold_data(limit=5000)
-        df_latest = load_latest_by_symbol(
-            selected_symbols if selected_symbols else None
-        )
-
-        if df_latest.empty:
-            st.warning(
-                "⏳ Waiting for data... Make sure the Gold layer processor is running."
-            )
-            time.sleep(5)
-            continue
-
-        # Filter by sector
-        if selected_sectors:
-            df_latest = df_latest[df_latest["sector"].isin(selected_sectors)]
 
         # ========================================
-        # Key Metrics Row
+        # HISTORICAL ANALYSIS VIEW
         # ========================================
-        st.subheader("📊 Market Overview")
-        col1, col2, col3, col4, col5 = st.columns(5)
+        if view_mode == "Historical Analysis":
+            st.subheader("📜 Historical Data Analysis")
 
-        with col1:
-            total_stocks = len(df_latest)
-            st.metric("Total Stocks", total_stocks)
+            # Load historical data
+            if start_date and end_date:
+                with st.spinner("Loading historical data..."):
+                    df_historical = load_historical_data(
+                        start_date=start_date,
+                        end_date=end_date,
+                        symbols=selected_symbols if selected_symbols else None,
+                        sectors=selected_sectors if selected_sectors else None,
+                    )
 
-        with col2:
-            buy_count = len(
-                df_latest[df_latest["recommendation"].isin(["BUY", "STRONG BUY"])]
-            )
-            st.metric("🟢 Buy Signals", buy_count)
+                if df_historical.empty:
+                    st.warning(
+                        "No data available for the selected filters and date range."
+                    )
+                    if not auto_refresh:
+                        break
+                    time.sleep(refresh_interval)
+                    continue
 
-        with col3:
-            sell_count = len(
-                df_latest[df_latest["recommendation"].isin(["SELL", "STRONG SELL"])]
-            )
-            st.metric("🔴 Sell Signals", sell_count)
+                # Display data summary
+                st.markdown(f"**Date Range:** {start_date} to {end_date}")
+                st.markdown(f"**Total Records:** {len(df_historical):,}")
 
-        with col4:
-            hold_count = len(df_latest[df_latest["recommendation"] == "HOLD"])
-            st.metric("🟡 Hold Signals", hold_count)
-
-        with col5:
-            avg_rsi = df_latest["rsi_14"].mean()
-            st.metric("Avg RSI", f"{avg_rsi:.1f}")
-
-        st.markdown("---")
-
-        # ========================================
-        # Trading Signals Table
-        # ========================================
-        st.subheader("🎯 Active Trading Signals")
-
-        # Create signals table
-        signals_df = df_latest[
-            [
-                "symbol",
-                "sector",
-                "close",
-                "price_change_pct",
-                "rsi_14",
-                "signal_score",
-                "recommendation",
-                "event_time",
-            ]
-        ].copy()
-
-        signals_df["price_change_pct"] = signals_df["price_change_pct"].round(2)
-        signals_df["rsi_14"] = signals_df["rsi_14"].round(1)
-        signals_df["close"] = signals_df["close"].round(2)
-
-        # Color code recommendations
-        def highlight_recommendation(val):
-            if val in ["STRONG BUY", "BUY"]:
-                return "background-color: #d4edda; color: #155724"
-            elif val in ["STRONG SELL", "SELL"]:
-                return "background-color: #f8d7da; color: #721c24"
-            else:
-                return "background-color: #fff3cd; color: #856404"
-
-        styled_df = signals_df.style.applymap(
-            highlight_recommendation, subset=["recommendation"]
-        )
-
-        st.dataframe(styled_df, use_container_width=True, height=300)
-
-        st.markdown("---")
-
-        # ========================================
-        # Detailed Analysis per Symbol
-        # ========================================
-        st.subheader("📈 Technical Analysis")
-
-        if selected_symbols:
-            # Create tabs for each symbol
-            tabs = st.tabs(selected_symbols[:5])  # Limit to 5 tabs
-
-            for i, symbol in enumerate(selected_symbols[:5]):
-                with tabs[i]:
-                    # Symbol info
-                    symbol_data = df_latest[df_latest["symbol"] == symbol].iloc[0]
-
-                    col1, col2, col3, col4 = st.columns(4)
-                    with col1:
-                        st.metric(
-                            "Current Price",
-                            f"${symbol_data['close']:.2f}",
-                            f"{symbol_data['price_change_pct']:.2f}%",
-                        )
-                    with col2:
-                        st.metric("RSI (14)", f"{symbol_data['rsi_14']:.1f}")
-                    with col3:
-                        st.metric("Signal Score", symbol_data["signal_score"])
-                    with col4:
-                        rec_color = (
-                            "🟢"
-                            if symbol_data["recommendation"] in ["BUY", "STRONG BUY"]
-                            else (
-                                "🔴"
-                                if symbol_data["recommendation"]
-                                in ["SELL", "STRONG SELL"]
-                                else "🟡"
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    unique_symbols = df_historical["symbol"].nunique()
+                    st.metric("Symbols", unique_symbols)
+                with col2:
+                    total_buy = len(
+                        df_historical[
+                            df_historical["recommendation"].isin(["BUY", "STRONG BUY"])
+                        ]
+                    )
+                    st.metric("🟢 Buy Signals", total_buy)
+                with col3:
+                    total_sell = len(
+                        df_historical[
+                            df_historical["recommendation"].isin(
+                                ["SELL", "STRONG SELL"]
                             )
-                        )
-                        st.metric(
-                            "Recommendation",
-                            f"{rec_color} {symbol_data['recommendation']}",
-                        )
+                        ]
+                    )
+                    st.metric("🔴 Sell Signals", total_sell)
+                with col4:
+                    avg_signal_score = df_historical["signal_score"].mean()
+                    st.metric("Avg Signal Score", f"{avg_signal_score:.2f}")
 
-                    # Technical indicators
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.write("**Moving Averages**")
-                        st.write(f"• SMA 5:  ${symbol_data['sma_5']:.2f}")
-                        st.write(f"• SMA 20: ${symbol_data['sma_20']:.2f}")
-                        st.write(f"• SMA 50: ${symbol_data['sma_50']:.2f}")
+                st.markdown("---")
 
-                    with col2:
-                        st.write("**Signals**")
-                        st.write(
-                            f"• Golden Cross: {'✅' if symbol_data['golden_cross'] else '❌'}"
-                        )
-                        st.write(
-                            f"• Death Cross: {'✅' if symbol_data['death_cross'] else '❌'}"
-                        )
-                        st.write(
-                            f"• RSI Oversold: {'✅' if symbol_data['rsi_oversold'] else '❌'}"
-                        )
-                        st.write(
-                            f"• RSI Overbought: {'✅' if symbol_data['rsi_overbought'] else '❌'}"
-                        )
+                # ========================================
+                # Historical Trend Charts
+                # ========================================
+                st.subheader("📈 Historical Trends")
 
-                    # Charts
-                    st.markdown("#### Price Chart with Indicators")
-                    chart = create_candlestick_chart(df_all, symbol)
-                    if chart:
-                        st.plotly_chart(chart, use_container_width=True)
+                # Metric selector for comparison
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.markdown("#### Price & Indicator Comparison")
+                with col2:
+                    metric_choice = st.selectbox(
+                        "Metric",
+                        options=[
+                            "close",
+                            "rsi_14",
+                            "volume",
+                            "price_change_pct",
+                            "signal_score",
+                        ],
+                        format_func=lambda x: {
+                            "close": "Price",
+                            "rsi_14": "RSI",
+                            "volume": "Volume",
+                            "price_change_pct": "Price Change %",
+                            "signal_score": "Signal Score",
+                        }.get(x, x),
+                    )
 
-                    st.markdown("#### MACD Indicator")
-                    macd_chart = create_macd_chart(df_all, symbol)
-                    if macd_chart:
-                        st.plotly_chart(macd_chart, use_container_width=True)
+                if selected_symbols:
+                    trend_chart = create_historical_trend_chart(
+                        df_historical, selected_symbols[:5], metric_choice
+                    )
+                    st.plotly_chart(trend_chart, use_container_width=True)
+                else:
+                    st.info("Select symbols from the sidebar to view trend comparisons")
+
+                st.markdown("---")
+
+                # ========================================
+                # Signal Distribution Over Time
+                # ========================================
+                st.subheader("📊 Trading Signal Distribution")
+
+                signal_dist_chart = create_signal_distribution_chart(df_historical)
+                st.plotly_chart(signal_dist_chart, use_container_width=True)
+
+                st.markdown("---")
+
+                # ========================================
+                # Historical Performance Metrics
+                # ========================================
+                st.subheader("📊 Performance Metrics by Symbol")
+
+                if selected_symbols:
+                    tabs = st.tabs(selected_symbols[:5])
+
+                    for i, symbol in enumerate(selected_symbols[:5]):
+                        with tabs[i]:
+                            metrics = calculate_historical_metrics(
+                                df_historical, symbol
+                            )
+
+                            if metrics:
+                                col1, col2, col3 = st.columns(3)
+
+                                with col1:
+                                    st.metric(
+                                        "Starting Price",
+                                        f"${metrics['price_start']:.2f}",
+                                    )
+                                    st.metric(
+                                        "Ending Price", f"${metrics['price_end']:.2f}"
+                                    )
+                                    st.metric(
+                                        "Price Change",
+                                        f"${metrics['price_change']:.2f}",
+                                        delta=f"{metrics['price_change_pct']:.2f}%",
+                                    )
+
+                                with col2:
+                                    st.metric(
+                                        "Highest Price", f"${metrics['price_high']:.2f}"
+                                    )
+                                    st.metric(
+                                        "Lowest Price", f"${metrics['price_low']:.2f}"
+                                    )
+                                    st.metric(
+                                        "Avg Volume", f"{metrics['avg_volume']:,.0f}"
+                                    )
+
+                                with col3:
+                                    st.metric("Avg RSI", f"{metrics['avg_rsi']:.1f}")
+                                    st.metric(
+                                        "Volatility (Avg)",
+                                        f"{metrics['volatility_avg']:.2f}",
+                                    )
+                                    st.metric(
+                                        "Total Records", f"{metrics['total_records']:,}"
+                                    )
+
+                                st.markdown("#### Trading Signals Summary")
+                                col1, col2, col3, col4, col5 = st.columns(5)
+                                with col1:
+                                    st.metric("🟢 Buy", metrics["buy_signals"])
+                                with col2:
+                                    st.metric("🟡 Hold", metrics["hold_signals"])
+                                with col3:
+                                    st.metric("🔴 Sell", metrics["sell_signals"])
+                                with col4:
+                                    st.metric(
+                                        "✅ Golden Cross", metrics["golden_crosses"]
+                                    )
+                                with col5:
+                                    st.metric(
+                                        "❌ Death Cross", metrics["death_crosses"]
+                                    )
+
+                                # Historical chart for this symbol
+                                st.markdown("#### Price History with Indicators")
+                                symbol_data = df_historical[
+                                    df_historical["symbol"] == symbol
+                                ]
+                                if not symbol_data.empty:
+                                    hist_chart = create_candlestick_chart(
+                                        symbol_data, symbol
+                                    )
+                                    if hist_chart:
+                                        st.plotly_chart(
+                                            hist_chart, use_container_width=True
+                                        )
+                            else:
+                                st.info(f"No historical data available for {symbol}")
+                else:
+                    st.info("Select symbols from the sidebar to view detailed metrics")
+
+                st.markdown("---")
+
+                # ========================================
+                # Export Historical Data
+                # ========================================
+                st.subheader("💾 Export Data")
+
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.markdown("Download the historical data for further analysis")
+                with col2:
+                    csv_data = df_historical.to_csv(index=False)
+                    st.download_button(
+                        label="📥 Download CSV",
+                        data=csv_data,
+                        file_name=f"historical_data_{start_date}_{end_date}.csv",
+                        mime="text/csv",
+                    )
+
+                # Raw data table
+                with st.expander("📋 View Raw Historical Data"):
+                    st.dataframe(df_historical, use_container_width=True, height=400)
+
+            else:
+                st.warning("Please select a valid date range")
+
+        # ========================================
+        # REAL-TIME VIEW (Original functionality)
+        # ========================================
         else:
-            st.info("👈 Select symbols from the sidebar to view detailed analysis")
-
-        # ========================================
-        # Sector Performance
-        # ========================================
-        st.markdown("---")
-        st.subheader("🏢 Sector Performance")
-
-        sector_perf = (
-            df_latest.groupby("sector")
-            .agg(
-                {
-                    "close": "mean",
-                    "price_change_pct": "mean",
-                    "volume": "sum",
-                    "rsi_14": "mean",
-                    "symbol": "count",
-                }
+            # Load fresh data
+            df_all = load_gold_data(limit=5000)
+            df_latest = load_latest_by_symbol(
+                selected_symbols if selected_symbols else None
             )
-            .round(2)
-        )
-        sector_perf.columns = [
-            "Avg Price",
-            "Avg Change %",
-            "Total Volume",
-            "Avg RSI",
-            "Stock Count",
-        ]
 
-        st.dataframe(sector_perf, use_container_width=True)
-
-        # Sector chart
-        fig_sector = go.Figure(
-            data=[
-                go.Bar(
-                    x=sector_perf.index,
-                    y=sector_perf["Avg Change %"],
-                    marker_color=[
-                        "green" if x > 0 else "red" for x in sector_perf["Avg Change %"]
-                    ],
-                    text=sector_perf["Avg Change %"],
-                    textposition="outside",
+            if df_latest.empty:
+                st.warning(
+                    "⏳ Waiting for data... Make sure the Gold layer processor is running."
                 )
+                time.sleep(5)
+                continue
+
+            # Filter by sector
+            if selected_sectors:
+                df_latest = df_latest[df_latest["sector"].isin(selected_sectors)]
+
+            # ========================================
+            # Key Metrics Row
+            # ========================================
+            st.subheader("📊 Market Overview")
+            col1, col2, col3, col4, col5 = st.columns(5)
+
+            with col1:
+                total_stocks = len(df_latest)
+                st.metric("Total Stocks", total_stocks)
+
+            with col2:
+                buy_count = len(
+                    df_latest[df_latest["recommendation"].isin(["BUY", "STRONG BUY"])]
+                )
+                st.metric("🟢 Buy Signals", buy_count)
+
+            with col3:
+                sell_count = len(
+                    df_latest[df_latest["recommendation"].isin(["SELL", "STRONG SELL"])]
+                )
+                st.metric("🔴 Sell Signals", sell_count)
+
+            with col4:
+                hold_count = len(df_latest[df_latest["recommendation"] == "HOLD"])
+                st.metric("🟡 Hold Signals", hold_count)
+
+            with col5:
+                avg_rsi = df_latest["rsi_14"].mean()
+                st.metric("Avg RSI", f"{avg_rsi:.1f}")
+
+            st.markdown("---")
+
+            # ========================================
+            # Trading Signals Table
+            # ========================================
+            st.subheader("🎯 Active Trading Signals")
+
+            # Create signals table
+            signals_df = df_latest[
+                [
+                    "symbol",
+                    "sector",
+                    "close",
+                    "price_change_pct",
+                    "rsi_14",
+                    "signal_score",
+                    "recommendation",
+                    "event_time",
+                ]
+            ].copy()
+
+            signals_df["price_change_pct"] = signals_df["price_change_pct"].round(2)
+            signals_df["rsi_14"] = signals_df["rsi_14"].round(1)
+            signals_df["close"] = signals_df["close"].round(2)
+
+            # Color code recommendations
+            def highlight_recommendation(val):
+                if val in ["STRONG BUY", "BUY"]:
+                    return "background-color: #d4edda; color: #155724"
+                elif val in ["STRONG SELL", "SELL"]:
+                    return "background-color: #f8d7da; color: #721c24"
+                else:
+                    return "background-color: #fff3cd; color: #856404"
+
+            styled_df = signals_df.style.applymap(
+                highlight_recommendation, subset=["recommendation"]
+            )
+
+            st.dataframe(styled_df, use_container_width=True, height=300)
+
+            st.markdown("---")
+
+            # ========================================
+            # Detailed Analysis per Symbol
+            # ========================================
+            st.subheader("📈 Technical Analysis")
+
+            if selected_symbols:
+                # Create tabs for each symbol
+                tabs = st.tabs(selected_symbols[:5])  # Limit to 5 tabs
+
+                for i, symbol in enumerate(selected_symbols[:5]):
+                    with tabs[i]:
+                        # Symbol info
+                        symbol_data = df_latest[df_latest["symbol"] == symbol].iloc[0]
+
+                        col1, col2, col3, col4 = st.columns(4)
+                        with col1:
+                            st.metric(
+                                "Current Price",
+                                f"${symbol_data['close']:.2f}",
+                                f"{symbol_data['price_change_pct']:.2f}%",
+                            )
+                        with col2:
+                            st.metric("RSI (14)", f"{symbol_data['rsi_14']:.1f}")
+                        with col3:
+                            st.metric("Signal Score", symbol_data["signal_score"])
+                        with col4:
+                            rec_color = (
+                                "🟢"
+                                if symbol_data["recommendation"]
+                                in ["BUY", "STRONG BUY"]
+                                else (
+                                    "🔴"
+                                    if symbol_data["recommendation"]
+                                    in ["SELL", "STRONG SELL"]
+                                    else "🟡"
+                                )
+                            )
+                            st.metric(
+                                "Recommendation",
+                                f"{rec_color} {symbol_data['recommendation']}",
+                            )
+
+                        # Technical indicators
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.write("**Moving Averages**")
+                            st.write(f"• SMA 5:  ${symbol_data['sma_5']:.2f}")
+                            st.write(f"• SMA 20: ${symbol_data['sma_20']:.2f}")
+                            st.write(f"• SMA 50: ${symbol_data['sma_50']:.2f}")
+
+                        with col2:
+                            st.write("**Signals**")
+                            st.write(
+                                f"• Golden Cross: {'✅' if symbol_data['golden_cross'] else '❌'}"
+                            )
+                            st.write(
+                                f"• Death Cross: {'✅' if symbol_data['death_cross'] else '❌'}"
+                            )
+                            st.write(
+                                f"• RSI Oversold: {'✅' if symbol_data['rsi_oversold'] else '❌'}"
+                            )
+                            st.write(
+                                f"• RSI Overbought: {'✅' if symbol_data['rsi_overbought'] else '❌'}"
+                            )
+
+                        # Charts
+                        st.markdown("#### Price Chart with Indicators")
+                        chart = create_candlestick_chart(df_all, symbol)
+                        if chart:
+                            st.plotly_chart(chart, use_container_width=True)
+
+                        st.markdown("#### MACD Indicator")
+                        macd_chart = create_macd_chart(df_all, symbol)
+                        if macd_chart:
+                            st.plotly_chart(macd_chart, use_container_width=True)
+            else:
+                st.info("👈 Select symbols from the sidebar to view detailed analysis")
+
+            # ========================================
+            # Sector Performance
+            # ========================================
+            st.markdown("---")
+            st.subheader("🏢 Sector Performance")
+
+            sector_perf = (
+                df_latest.groupby("sector")
+                .agg(
+                    {
+                        "close": "mean",
+                        "price_change_pct": "mean",
+                        "volume": "sum",
+                        "rsi_14": "mean",
+                        "symbol": "count",
+                    }
+                )
+                .round(2)
+            )
+            sector_perf.columns = [
+                "Avg Price",
+                "Avg Change %",
+                "Total Volume",
+                "Avg RSI",
+                "Stock Count",
             ]
-        )
-        fig_sector.update_layout(
-            title="Sector Performance (%)",
-            xaxis_title="Sector",
-            yaxis_title="Average Change %",
-            height=400,
-            template="plotly_white",
-        )
-        st.plotly_chart(fig_sector, use_container_width=True)
+
+            st.dataframe(sector_perf, use_container_width=True)
+
+            # Sector chart
+            fig_sector = go.Figure(
+                data=[
+                    go.Bar(
+                        x=sector_perf.index,
+                        y=sector_perf["Avg Change %"],
+                        marker_color=[
+                            "green" if x > 0 else "red"
+                            for x in sector_perf["Avg Change %"]
+                        ],
+                        text=sector_perf["Avg Change %"],
+                        textposition="outside",
+                    )
+                ]
+            )
+            fig_sector.update_layout(
+                title="Sector Performance (%)",
+                xaxis_title="Sector",
+                yaxis_title="Average Change %",
+                height=400,
+                template="plotly_white",
+            )
+            st.plotly_chart(fig_sector, use_container_width=True)
 
         # Footer
         st.markdown("---")

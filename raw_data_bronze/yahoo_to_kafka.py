@@ -92,8 +92,6 @@ producer = KafkaProducer(
     value_serializer=lambda v: json.dumps(v).encode("utf-8"),
 )
 
-print("Kafka Producer initialized!")
-
 
 def fetch_latest_price(symbol):
     """
@@ -137,18 +135,12 @@ def fetch_latest_price(symbol):
 # Thoi gian sleep giua cac lan fetch (giay)
 SLEEP_TIME = 5  # Reduced to 1 second for near real-time
 
-print("=" * 60)
 print("START STREAMING STOCK DATA TO KAFKA")
-print(f"Topic: stock_ticks")
-print(f"Symbols: {len(SYMBOLS)} stocks")
-print(f"Interval: {SLEEP_TIME} second(s)")
-print("=" * 60)
-print("\nPress Ctrl+C to stop.\n")
+print(f"Topic: stock_ticks | Symbols: {len(SYMBOLS)} | Interval: {SLEEP_TIME}s")
+print("Press Ctrl+C to stop.\n")
 
 try:
     while True:
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Fetching data...")
-
         success_count = 0
         fail_count = 0
 
@@ -157,28 +149,19 @@ try:
                 event = fetch_latest_price(symbol)
 
                 if event is None:
-                    print(f"  [SKIP] {symbol} - No data")
                     fail_count += 1
                     continue
 
                 producer.send("stock_ticks", event)
-                print(
-                    f"  [OK] {symbol:6s} | {event['sector']:10s} | ${event['close']:8.2f} | {event['event_time']}"
-                )
                 success_count += 1
 
             except Exception as e:
-                print(f"  [ERROR] {symbol}: {e}")
                 fail_count += 1
 
-        print(f"\nBatch completed: {success_count} success, {fail_count} failed")
-        print(f"Sleeping {SLEEP_TIME} seconds...\n")
         time.sleep(SLEEP_TIME)
 
 except KeyboardInterrupt:
-    print("\n" + "=" * 60)
-    print("Stopping producer...")
+    print("\nStopping producer...")
     producer.flush()
     producer.close()
-    print("Producer stopped. Goodbye!")
-    print("=" * 60)
+    print("Producer stopped!")

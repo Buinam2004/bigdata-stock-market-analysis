@@ -44,38 +44,23 @@ spark = (
 
 spark.sparkContext.setLogLevel("WARN")
 
-print("=" * 80)
 print("QUERY SILVER LAYER DATA")
-print("=" * 80)
 
 # Use database
 spark.sql("USE stock_db")
 
 # Read Silver table
-print("\n📊 Reading from stock_silver table...")
 silver_df = spark.read.format("iceberg").table("stock_silver")
-
-print(f"✓ Total records in Silver: {silver_df.count()}\n")
-
-spark.sql("DESCRIBE EXTENDED local.stock_db.stock_silver").show(truncate=False)
-
-
-spark.sql("SELECT * FROM local.stock_db.stock_silver.snapshots").show(truncate=False)
-
-
-spark.table("local.stock_db.stock_silver").inputFiles()[:20]  # show up to 20 paths
-
+print(f"Total records in Silver: {silver_df.count()}\n")
 
 # Display schema
-print("=" * 80)
-print("SILVER TABLE SCHEMA")
-print("=" * 80)
+spark.sql("DESCRIBE EXTENDED local.stock_db.stock_silver").show(truncate=False)
+
+print("\nSILVER TABLE SCHEMA")
 silver_df.printSchema()
 
 # Show sample data
-print("\n" + "=" * 80)
-print("SAMPLE RECORDS (Latest 20)")
-print("=" * 80)
+print("\nSAMPLE RECORDS (Latest 20)")
 silver_df.orderBy(col("processed_time").desc()).select(
     "symbol",
     "sector",
@@ -88,9 +73,7 @@ silver_df.orderBy(col("processed_time").desc()).select(
 ).show(20, truncate=False)
 
 # Data Quality Statistics
-print("\n" + "=" * 80)
-print("DATA QUALITY STATISTICS")
-print("=" * 80)
+print("\nDATA QUALITY STATISTICS")
 
 total_records = silver_df.count()
 
@@ -114,33 +97,25 @@ if total_records > 0:
         ).alias("imputed_count"),
     ).collect()[0]
 
-    print(f"\nTotal Records:          {quality_stats['total_records']}")
+    print(f"\nTotal Records: {quality_stats['total_records']}")
     print(
-        f"Valid Prices:           {quality_stats['valid_price_count']} "
-        f"({quality_stats['valid_price_count']/total_records*100:.1f}%)"
+        f"Valid Prices: {quality_stats['valid_price_count']} ({quality_stats['valid_price_count']/total_records*100:.1f}%)"
     )
     print(
-        f"Valid Volumes:          {quality_stats['valid_volume_count']} "
-        f"({quality_stats['valid_volume_count']/total_records*100:.1f}%)"
+        f"Valid Volumes: {quality_stats['valid_volume_count']} ({quality_stats['valid_volume_count']/total_records*100:.1f}%)"
     )
     print(
-        f"Complete Records:       {quality_stats['complete_record_count']} "
-        f"({quality_stats['complete_record_count']/total_records*100:.1f}%)"
+        f"Complete Records: {quality_stats['complete_record_count']} ({quality_stats['complete_record_count']/total_records*100:.1f}%)"
     )
     print(
-        f"Anomalies Detected:     {quality_stats['anomaly_count']} "
-        f"({quality_stats['anomaly_count']/total_records*100:.1f}%)"
+        f"Anomalies: {quality_stats['anomaly_count']} ({quality_stats['anomaly_count']/total_records*100:.1f}%)"
     )
     print(
-        f"Records with Imputation: {quality_stats['imputed_count']} "
-        f"({quality_stats['imputed_count']/total_records*100:.1f}%)"
+        f"Imputed: {quality_stats['imputed_count']} ({quality_stats['imputed_count']/total_records*100:.1f}%)"
     )
 
     # Per-Symbol Statistics
-    print("\n" + "=" * 80)
-    print("PER-SYMBOL STATISTICS")
-    print("=" * 80)
-
+    print("\nPER-SYMBOL STATISTICS")
     symbol_stats = (
         silver_df.groupBy("symbol", "sector")
         .agg(
@@ -151,7 +126,6 @@ if total_records > 0:
         )
         .orderBy(col("record_count").desc())
     )
-
     symbol_stats.show(50, truncate=False)
 
     # Show anomalies if any
@@ -159,14 +133,10 @@ if total_records > 0:
     anomaly_count = anomalies_df.count()
 
     if anomaly_count > 0:
-        print("\n" + "=" * 80)
-        print(f"DETECTED ANOMALIES ({anomaly_count} records)")
-        print("=" * 80)
+        print(f"\nDETECTED ANOMALIES ({anomaly_count} records)")
         anomalies_df.select(
             "symbol", "close", "volume", "event_time", "has_anomaly"
         ).orderBy(col("event_time").desc()).show(20, truncate=False)
-    else:
-        print("\n✓ No anomalies detected in the data")
 
     # Show imputed records
     imputed_df = silver_df.filter(
@@ -178,9 +148,7 @@ if total_records > 0:
     imputed_count = imputed_df.count()
 
     if imputed_count > 0:
-        print("\n" + "=" * 80)
-        print(f"RECORDS WITH IMPUTATION ({imputed_count} records)")
-        print("=" * 80)
+        print(f"\nRECORDS WITH IMPUTATION ({imputed_count} records)")
         imputed_df.select(
             "symbol",
             "open",
@@ -192,13 +160,7 @@ if total_records > 0:
             "low_imputed",
             "close_imputed",
         ).show(20, truncate=False)
-    else:
-        print("\n✓ No imputed values in the data")
 else:
-    print("\n⚠ No records found in Silver table")
-
-print("\n" + "=" * 80)
-print("QUERY COMPLETED")
-print("=" * 80)
+    print("\nNo records found in Silver table")
 
 spark.stop()

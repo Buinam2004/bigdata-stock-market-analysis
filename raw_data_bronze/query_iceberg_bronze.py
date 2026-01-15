@@ -42,39 +42,21 @@ spark = (
 
 spark.sparkContext.setLogLevel("WARN")
 
-print("=" * 80)
-print("PHASE 5: VERIFY & BAN GIAO")
-print("=" * 80)
+print("PHASE 5: VERIFY Bronze Layer")
 
-# 1. Kiem tra bang ton tai
-print("\n" + "=" * 80)
-print("1. VERIFY: Bang stock_bronze ton tai")
-print("=" * 80)
+# Check if table exists
 spark.sql("SHOW TABLES IN stock_db").show()
 
-# 2. Kiem tra schema
-print("\n" + "=" * 80)
-print("2. VERIFY: Schema cua bang stock_bronze")
-print("=" * 80)
+# Check schema
 spark.sql("DESCRIBE stock_db.stock_bronze").show(truncate=False)
 
-# 3. Dem so luong records
-print("\n" + "=" * 80)
-print("3. VERIFY: So luong records")
-print("=" * 80)
+# Count records
 count_df = spark.sql("SELECT COUNT(*) as total_records FROM stock_db.stock_bronze")
 count_df.show()
 total = count_df.collect()[0]["total_records"]
-print(f"   >>> Total records: {total}")
+print(f"Total records: {total}")
 
-# 4. QUERY CHINH - Theo yeu cau Phase 5
-print("\n" + "=" * 80)
-print("4. VERIFY: Query chinh theo yeu cau")
-print("   SELECT symbol, close, volume, event_time")
-print("   FROM stock_bronze")
-print("   ORDER BY ingest_time DESC")
-print("   LIMIT 10;")
-print("=" * 80)
+# Query sample data
 spark.sql(
     """
 SELECT symbol, close, volume, event_time
@@ -84,10 +66,7 @@ LIMIT 10
 """
 ).show(truncate=False)
 
-# 5. Kiem tra du lieu tang theo thoi gian
-print("\n" + "=" * 80)
-print("5. VERIFY: Du lieu tang theo thoi gian (group by minute)")
-print("=" * 80)
+# Check data over time
 spark.sql(
     """
 SELECT 
@@ -100,10 +79,7 @@ LIMIT 10
 """
 ).show(truncate=False)
 
-# 6. Thong ke theo sector
-print("\n" + "=" * 80)
-print("6. BONUS: Thong ke theo sector")
-print("=" * 80)
+# Statistics by sector
 spark.sql(
     """
 SELECT 
@@ -118,10 +94,7 @@ ORDER BY count DESC
 """
 ).show()
 
-# 7. Thong ke theo symbol
-print("\n" + "=" * 80)
-print("7. BONUS: Top 10 symbols theo so luong records")
-print("=" * 80)
+# Top 10 symbols
 spark.sql(
     """
 SELECT 
@@ -136,36 +109,7 @@ LIMIT 10
 """
 ).show()
 
-# KET LUAN
-print("\n" + "=" * 80)
-print("VERIFICATION SUMMARY")
-print("=" * 80)
-
-if total > 0:
-    print(
-        f"""
-    PASS: Bang stock_bronze TON TAI
-    PASS: Co {total} records trong bang
-    PASS: Du lieu co day du cot (symbol, close, volume, event_time)
-    PASS: Co the query bang Spark SQL
-    
-    PHASE 5 HOAN THANH! Pipeline hoat dong tot!
-    """
-    )
-else:
-    print(
-        f"""
-        WARNING: Bang stock_bronze TRONG (0 records)
-    
-    Kiem tra:
-    1. Producer (yahoo_to_kafka.py) co dang chay khong?
-    2. Iceberg writer (spark_to_iceberg_bronze.py) co dang chay khong?
-    3. Kafka container co dang chay khong?
-    
-    Thu lai sau vai phut khi pipeline da chay.
-    """
-    )
-
-print("=" * 80)
+# Summary
+print(f"\nVerification Summary: {total} records in Bronze layer")
 
 spark.stop()

@@ -71,19 +71,11 @@ spark = (
 
 spark.sparkContext.setLogLevel("WARN")
 
-print("=" * 80)
 print("GOLD LAYER: Real-time Technical Indicators & Analytics")
-print("=" * 80)
-print("SparkSession initialized!")
 print(f"Warehouse: {ICEBERG_WAREHOUSE}")
 print(f"Checkpoint: {CHECKPOINT_LOCATION}")
 
 spark.sql("USE stock_db")
-
-# Create Gold table for real-time metrics
-print("\n" + "=" * 80)
-print("Creating Gold Table: stock_gold_realtime")
-print("=" * 80)
 
 spark.sql(
     """
@@ -150,20 +142,11 @@ PARTITIONED BY (hours(processed_time))
 """
 )
 
-print("✓ Table stock_gold_realtime created successfully!")
-
-# Read streaming data from Silver table
-print("\n" + "=" * 80)
-print("Reading streaming data from Silver table...")
-print("=" * 80)
-
 silver_stream = (
     spark.readStream.format("iceberg")
     .option("stream-from-timestamp", "0")
     .table("stock_silver")
 )
-
-print("✓ Connected to stock_silver table")
 
 
 def calculate_ema(values, period):
@@ -178,12 +161,7 @@ def process_gold_batch(batch_df, batch_id):
     Process each micro-batch with technical indicator calculations
     """
     if batch_df.isEmpty():
-        print(f"[BATCH {batch_id}] No data to process")
         return
-
-    print(f"\n{'=' * 80}")
-    print(f"[BATCH {batch_id}] Processing {batch_df.count()} records")
-    print(f"{'=' * 80}")
 
     # Filter only valid records from Silver
     df = batch_df.filter(
@@ -201,7 +179,6 @@ def process_gold_batch(batch_df, batch_id):
     )
 
     if df.isEmpty():
-        print(f"  ⚠ No valid records to process")
         return
 
     # Define window specifications - Use ingest_time for proper ordering since event_time may be same
@@ -212,8 +189,7 @@ def process_gold_batch(batch_df, batch_id):
     window_20 = symbol_window.rowsBetween(-19, 0)
     window_50 = symbol_window.rowsBetween(-49, 0)
 
-    # Step 1: Calculate Simple Moving Averages
-    print(f"  📊 Calculating Moving Averages...")
+    # Calculate Simple Moving Averages
     df_ma = (
         df.withColumn("sma_5", avg("close").over(window_5))
         .withColumn("sma_20", avg("close").over(window_20))
@@ -239,8 +215,7 @@ def process_gold_batch(batch_df, batch_id):
         )
     )
 
-    # Step 3: Calculate RSI (Relative Strength Index)
-    print(f"  📈 Calculating RSI...")
+    # Calculate RSI (Relative Strength Index)
     window_14 = Window.partitionBy("symbol").orderBy("ingest_time").rowsBetween(-13, 0)
 
     df_rsi = (
@@ -265,8 +240,7 @@ def process_gold_batch(batch_df, batch_id):
         .drop("gain", "loss", "avg_gain", "avg_loss", "rs")
     )
 
-    # Step 4: Calculate MACD
-    print(f"  📉 Calculating MACD...")
+    # Calculate MACD
     window_12 = Window.partitionBy("symbol").orderBy("ingest_time").rowsBetween(-11, 0)
     window_26 = Window.partitionBy("symbol").orderBy("ingest_time").rowsBetween(-25, 0)
     window_9 = Window.partitionBy("symbol").orderBy("ingest_time").rowsBetween(-8, 0)
@@ -280,8 +254,7 @@ def process_gold_batch(batch_df, batch_id):
         .drop("ema_12_temp", "ema_26")
     )
 
-    # Step 5: Calculate Bollinger Bands
-    print(f"  📊 Calculating Bollinger Bands...")
+    # Calculate Bollinger Bands
     df_bb = (
         df_macd.withColumn("bb_middle", col("sma_20"))
         .withColumn("std_20", stddev("close").over(window_20))
@@ -291,8 +264,7 @@ def process_gold_batch(batch_df, batch_id):
         .drop("std_20")
     )
 
-    # Step 6: Calculate Volume metrics
-    print(f"  📦 Calculating Volume Metrics...")
+    # Calculate Volume metrics
     df_volume = df_bb.withColumn(
         "volume_sma_20", avg("volume").over(window_20)
     ).withColumn(
@@ -302,14 +274,12 @@ def process_gold_batch(batch_df, batch_id):
         ),
     )
 
-    # Step 7: Calculate Volatility (20-period standard deviation)
+    # Calculate Volatility (20-period standard deviation)
     df_volatility = df_volume.withColumn(
         "volatility_20", stddev("close").over(window_20)
     )
 
-    # Step 8: Generate Trading Signals
-    print(f"  🎯 Generating Trading Signals...")
-
+    # Generate Trading Signals
     df_signals = (
         df_volatility.withColumn("prev_sma_5", lag("sma_5", 1).over(symbol_window))
         .withColumn("prev_sma_20", lag("sma_20", 1).over(symbol_window))
@@ -358,46 +328,12 @@ def process_gold_batch(batch_df, batch_id):
         .drop("ingest_time")  # Drop helper column before writing to gold table
     )
 
-    # Step 10: Quality metrics for this batch
-    total_records = df_final.count()
-    buy_signals = df_final.filter(
-        col("recommendation").isin(["BUY", "STRONG BUY"])
-    ).count()
-    sell_signals = df_final.filter(
-        col("recommendation").isin(["SELL", "STRONG SELL"])
-    ).count()
-    hold_signals = df_final.filter(col("recommendation") == "HOLD").count()
-
-    print(f"\n  📊 Batch Analytics:")
-    print(f"     Total records:     {total_records}")
-    print(
-        f"     BUY signals:       {buy_signals} ({buy_signals/total_records*100:.1f}%)"
-    )
-    print(
-        f"     SELL signals:      {sell_signals} ({sell_signals/total_records*100:.1f}%)"
-    )
-    print(
-        f"     HOLD signals:      {hold_signals} ({hold_signals/total_records*100:.1f}%)"
-    )
-
-    # Show sample recommendations
-    print(f"\n  🎯 Sample Recommendations:")
-    df_final.select(
-        "symbol", "close", "sma_5", "sma_20", "rsi_14", "signal_score", "recommendation"
-    ).filter(col("recommendation") != "HOLD").show(5, truncate=False)
-
-    # Step 11: Write to Gold table
-    print(f"\n  💾 Writing to stock_gold_realtime table...")
+    # Write to Gold table
     df_final.writeTo("local.stock_db.stock_gold_realtime").append()
-
-    print(f"  ✓ Batch {batch_id} completed successfully!")
-    print(f"{'=' * 80}\n")
 
 
 # Start streaming query with foreachBatch
-print("\n" + "=" * 80)
 print("Starting Gold Layer Streaming Query...")
-print("=" * 80)
 
 gold_query = (
     silver_stream.writeStream.foreachBatch(process_gold_batch)
@@ -406,20 +342,13 @@ gold_query = (
     .start()
 )
 
-print("\n✓ Gold Layer streaming query STARTED!")
-print(f"  Query ID: {gold_query.id}")
-print(f"  Processing interval: 2 seconds")
-print(f"  Output: stock_db.stock_gold_realtime")
-print("\n" + "=" * 80)
-print("📊 Real-time Technical Indicators Active!")
-print("🎯 Trading Signals Being Generated!")
-print("\nPress Ctrl+C to stop.")
-print("=" * 80 + "\n")
+print(f"Gold Layer streaming query STARTED (Query ID: {gold_query.id})")
+print("Press Ctrl+C to stop.")
 
 # Wait for termination
 try:
     gold_query.awaitTermination()
 except KeyboardInterrupt:
-    print("\n\nStopping Gold Layer query...")
+    print("\nStopping Gold Layer query...")
     gold_query.stop()
-    print("✓ Query stopped successfully!")
+    print("Query stopped successfully!")

@@ -43,22 +43,18 @@ spark = (
 
 spark.sparkContext.setLogLevel("WARN")
 
-print("=" * 80)
 print("QUERY GOLD LAYER DATA - Technical Indicators & Trading Signals")
-print("=" * 80)
 
 spark.sql("USE stock_db")
 
-
 # Read Gold table
-print("\n📊 Reading from stock_gold_realtime table...")
 gold_df = spark.read.format("iceberg").table("stock_gold_realtime")
 
 total_records = gold_df.count()
-print(f"✓ Total records in Gold: {total_records}\n")
+print(f"Total records in Gold: {total_records}\n")
 
 if total_records == 0:
-    print("⚠️  No data in Gold layer yet. Make sure the streaming processor is running.")
+    print("No data in Gold layer yet. Make sure the streaming processor is running.")
     spark.stop()
     exit()
 
@@ -69,10 +65,6 @@ print("=" * 80)
 gold_df.printSchema()
 
 # Get latest records per symbol
-print("\n" + "=" * 80)
-print("LATEST TRADING SIGNALS (Most Recent per Symbol)")
-print("=" * 80)
-
 latest_signals = spark.sql(
     """
     SELECT symbol, sector, close, price_change_pct, 
@@ -88,12 +80,11 @@ latest_signals = spark.sql(
 """
 )
 
+print("\nLATEST TRADING SIGNALS (Most Recent per Symbol)")
 latest_signals.show(50, truncate=False)
 
 # Trading Signals Summary
-print("\n" + "=" * 80)
-print("TRADING SIGNALS SUMMARY")
-print("=" * 80)
+print("\nTRADING SIGNALS SUMMARY")
 
 signal_summary = spark.sql(
     """
@@ -130,15 +121,10 @@ buy_signals = spark.sql(
 )
 
 if buy_signals.count() > 0:
+    print("\n🟢 BUY SIGNALS")
     buy_signals.show(20, truncate=False)
-else:
-    print("No buy signals detected")
 
-# Technical Indicators - Sell Signals
-print("\n" + "=" * 80)
-print("🔴 STRONG SELL & SELL SIGNALS")
-print("=" * 80)
-
+# Sell Signals
 sell_signals = spark.sql(
     """
     SELECT symbol, sector, close, rsi_14, macd, signal_score, recommendation
@@ -153,15 +139,10 @@ sell_signals = spark.sql(
 )
 
 if sell_signals.count() > 0:
+    print("\n🔴 SELL SIGNALS")
     sell_signals.show(20, truncate=False)
-else:
-    print("No sell signals detected")
 
 # Golden Cross & Death Cross
-print("\n" + "=" * 80)
-print("📊 GOLDEN CROSS & DEATH CROSS EVENTS")
-print("=" * 80)
-
 crosses = spark.sql(
     """
     SELECT symbol, sector, close, sma_5, sma_20, 
@@ -177,15 +158,10 @@ crosses = spark.sql(
 )
 
 if crosses.count() > 0:
+    print("\n📊 GOLDEN CROSS & DEATH CROSS EVENTS")
     crosses.show(20, truncate=False)
-else:
-    print("No recent golden/death cross events")
 
 # RSI Extremes
-print("\n" + "=" * 80)
-print("⚠️  RSI EXTREMES (Oversold/Overbought)")
-print("=" * 80)
-
 rsi_extremes = spark.sql(
     """
     SELECT symbol, sector, close, rsi_14, 
@@ -201,15 +177,11 @@ rsi_extremes = spark.sql(
 )
 
 if rsi_extremes.count() > 0:
+    print("\n⚠️  RSI EXTREMES (Oversold/Overbought)")
     rsi_extremes.show(20, truncate=False)
-else:
-    print("No RSI extremes detected")
 
 # Sector Performance
-print("\n" + "=" * 80)
-print("🏢 SECTOR PERFORMANCE")
-print("=" * 80)
-
+print("\n🏢 SECTOR PERFORMANCE")
 sector_perf = spark.sql(
     """
     SELECT sector,
@@ -228,14 +200,10 @@ sector_perf = spark.sql(
     ORDER BY avg_change_pct DESC
 """
 )
-
 sector_perf.show(truncate=False)
 
 # Top Performers
-print("\n" + "=" * 80)
-print("🏆 TOP 10 PERFORMERS (by % change)")
-print("=" * 80)
-
+print("\n🏆 TOP 10 PERFORMERS (by % change)")
 top_performers = spark.sql(
     """
     SELECT symbol, sector, close, price_change_pct, volume, recommendation
@@ -249,14 +217,10 @@ top_performers = spark.sql(
     LIMIT 10
 """
 )
-
 top_performers.show(truncate=False)
 
 # Bottom Performers
-print("\n" + "=" * 80)
-print("📉 BOTTOM 10 PERFORMERS (by % change)")
-print("=" * 80)
-
+print("\n📉 BOTTOM 10 PERFORMERS (by % change)")
 bottom_performers = spark.sql(
     """
     SELECT symbol, sector, close, price_change_pct, volume, recommendation
@@ -270,11 +234,6 @@ bottom_performers = spark.sql(
     LIMIT 10
 """
 )
-
 bottom_performers.show(truncate=False)
-
-print("\n" + "=" * 80)
-print("QUERY COMPLETED")
-print("=" * 80)
 
 spark.stop()

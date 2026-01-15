@@ -68,20 +68,12 @@ spark = (
 
 spark.sparkContext.setLogLevel("WARN")
 
-print("=" * 80)
 print("SILVER LAYER: Data Quality & Cleansing")
-print("=" * 80)
-print("SparkSession with Iceberg initialized!")
 print(f"Warehouse: {ICEBERG_WAREHOUSE}")
 print(f"Checkpoint: {CHECKPOINT_LOCATION}")
 
 # Use stock_db database
 spark.sql("USE stock_db")
-
-# Create Silver table with partitioning for better performance
-print("\n" + "=" * 80)
-print("Creating Silver Table: stock_silver")
-print("=" * 80)
 
 spark.sql(
     """
@@ -112,22 +104,11 @@ PARTITIONED BY (days(processed_time))
 """
 )
 
-print("✓ Table stock_silver created successfully!")
-
-# Read streaming data from Bronze table
-print("\n" + "=" * 80)
-print("Reading streaming data from Bronze table...")
-print("=" * 80)
-
 bronze_stream = (
     spark.readStream.format("iceberg")
     .option("stream-from-timestamp", "0")  # Read all data from beginning
     .table("stock_bronze")
 )
-
-print("✓ Connected to stock_bronze table")
-print("\nBronze schema:")
-bronze_stream.printSchema()
 
 
 def process_silver_batch(batch_df, batch_id):
@@ -135,12 +116,7 @@ def process_silver_batch(batch_df, batch_id):
     Process each micro-batch with data quality checks and cleansing
     """
     if batch_df.isEmpty():
-        print(f"[BATCH {batch_id}] No data to process")
         return
-
-    print(f"\n{'=' * 80}")
-    print(f"[BATCH {batch_id}] Processing {batch_df.count()} records")
-    print(f"{'=' * 80}")
 
     # Step 1: Convert event_time to timestamp
     df = batch_df.withColumn("event_time", col("event_time").cast("timestamp"))
@@ -225,45 +201,12 @@ def process_silver_batch(batch_df, batch_id):
     # Step 6: Add processing timestamp
     silver_df = df_imputed.withColumn("processed_time", current_timestamp())
 
-    # Step 7: Quality metrics for this batch
-    total_records = silver_df.count()
-    valid_prices = silver_df.filter(col("is_valid_price") == True).count()
-    valid_volumes = silver_df.filter(col("is_valid_volume") == True).count()
-    complete_records = silver_df.filter(col("is_complete_record") == True).count()
-    anomalies = silver_df.filter(col("has_anomaly") == True).count()
-    imputed = silver_df.filter(
-        col("open_imputed")
-        | col("high_imputed")
-        | col("low_imputed")
-        | col("close_imputed")
-    ).count()
-
-    print(f"\n  📊 Batch Quality Metrics:")
-    print(f"     Total records:      {total_records}")
-    print(
-        f"     Valid prices:       {valid_prices} ({valid_prices/total_records*100:.1f}%)"
-    )
-    print(
-        f"     Valid volumes:      {valid_volumes} ({valid_volumes/total_records*100:.1f}%)"
-    )
-    print(
-        f"     Complete records:   {complete_records} ({complete_records/total_records*100:.1f}%)"
-    )
-    print(f"     Anomalies detected: {anomalies}")
-    print(f"     Imputed values:     {imputed}")
-
-    # Step 8: Write to Silver table
-    print(f"\n  💾 Writing to stock_silver table...")
+    # Write to Silver table
     silver_df.writeTo("local.stock_db.stock_silver").append()
-
-    print(f"  ✓ Batch {batch_id} completed successfully!")
-    print(f"{'=' * 80}\n")
 
 
 # Start streaming query with foreachBatch
-print("\n" + "=" * 80)
 print("Starting Silver Layer Streaming Query...")
-print("=" * 80)
 
 silver_query = (
     bronze_stream.writeStream.foreachBatch(process_silver_batch)
@@ -272,13 +215,8 @@ silver_query = (
     .start()
 )
 
-print("\n✓ Silver Layer streaming query STARTED!")
-print(f"  Query ID: {silver_query.id}")
-print(f"  Processing interval: 1 second")
-print(f"  Output: stock_db.stock_silver")
-print("\n" + "=" * 80)
+print(f"Silver Layer streaming query STARTED (Query ID: {silver_query.id})")
 print("Press Ctrl+C to stop.")
-print("=" * 80 + "\n")
 
 # Wait for termination
 try:

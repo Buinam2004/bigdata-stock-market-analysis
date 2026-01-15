@@ -50,20 +50,14 @@ spark = (
 
 spark.sparkContext.setLogLevel("WARN")
 
-print("=" * 60)
 print("PHASE 4: Spark Streaming -> Iceberg Bronze")
-print("=" * 60)
-print("SparkSession with Iceberg initialized!")
-print(f"Catalog: {spark.conf.get('spark.sql.defaultCatalog')}")
 print(f"Warehouse: {spark.conf.get('spark.sql.catalog.local.warehouse')}")
 
-# Tao database neu chua co
-print("\nCreating database: stock_db")
+# Create database if not exists
 spark.sql("CREATE DATABASE IF NOT EXISTS stock_db")
 spark.sql("USE stock_db")
 
-# Tao bang Iceberg stock_bronze
-print("Creating Iceberg table: stock_bronze")
+# Create Iceberg table
 spark.sql(
     """
 CREATE TABLE IF NOT EXISTS stock_bronze (
@@ -80,10 +74,8 @@ CREATE TABLE IF NOT EXISTS stock_bronze (
 ) USING iceberg
 """
 )
-print("Table stock_bronze created successfully!")
 
-# Doc streaming tu Kafka
-print("\nReading streaming data from Kafka...")
+# Read streaming from Kafka
 kafka_df = (
     spark.readStream.format("kafka")
     .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP_SERVERS)
@@ -107,21 +99,17 @@ stock_schema = StructType(
     ]
 )
 
-# Parse JSON tu Kafka value
+# Parse JSON from Kafka value
 parsed_df = kafka_df.select(
     from_json(col("value").cast("string"), stock_schema).alias("data")
 ).select("data.*")
 
-# Buoc 4.2.1: Chuan hoa Bronze - Them ingest_time va source
+# Add ingest_time and source to Bronze
 bronze_df = parsed_df.withColumn("ingest_time", current_timestamp()).withColumn(
     "source", lit("yahoo_finance")
 )
 
-print("\nBronze DataFrame schema:")
-bronze_df.printSchema()
-
-# Buoc 4.2.2: Write Streaming -> Iceberg
-print("Starting streaming write to Iceberg Bronze...")
+# Write Streaming -> Iceberg
 bronze_query = (
     bronze_df.writeStream.format("iceberg")
     .outputMode("append")
@@ -130,14 +118,10 @@ bronze_query = (
     .toTable("stock_bronze")
 )
 
-print("=" * 60)
 print("Streaming to Iceberg Bronze STARTED!")
 print(f"Query ID: {bronze_query.id}")
-print("=" * 60)
-print(f"\nData is being written to: {ICEBERG_WAREHOUSE}/stock_db/stock_bronze")
-print(f"Checkpoint location: {CHECKPOINT_LOCATION}")
-print("\nPress Ctrl+C to stop.")
-print("=" * 60)
+print(f"Data: {ICEBERG_WAREHOUSE}/stock_db/stock_bronze")
+print("Press Ctrl+C to stop.")
 
-# Doi query chay
+# Wait for query
 bronze_query.awaitTermination()

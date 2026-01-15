@@ -15,26 +15,21 @@ from pyspark.sql.functions import col, from_json
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 
 # Set Python executable environment variables to avoid conflicts
-os.environ['PYSPARK_PYTHON'] = sys.executable
-os.environ['PYSPARK_DRIVER_PYTHON'] = sys.executable
+os.environ["PYSPARK_PYTHON"] = sys.executable
+os.environ["PYSPARK_DRIVER_PYTHON"] = sys.executable
 
 # Ensure JAVA_HOME is set properly (fix path if needed)
-if 'JAVA_HOME' in os.environ:
-    java_home = os.environ['JAVA_HOME'].rstrip('\\').rstrip('/')
-    os.environ['JAVA_HOME'] = java_home
-    print(f"Using JAVA_HOME: {java_home}")
+if "JAVA_HOME" in os.environ:
+    java_home = os.environ["JAVA_HOME"].rstrip("\\").rstrip("/")
+    os.environ["JAVA_HOME"] = java_home
 
 # Set Hadoop home to avoid warnings (Windows specific)
-if not os.environ.get('HADOOP_HOME'):
-    os.environ['HADOOP_HOME'] = os.path.dirname(sys.executable)
+if not os.environ.get("HADOOP_HOME"):
+    os.environ["HADOOP_HOME"] = os.path.dirname(sys.executable)
 
-print("Initializing Spark Session...")
-print("This may take a minute on first run to download dependencies...")
-
-# Khoi tao SparkSession with better configuration for Java 21
+# Initialize Spark Session
 spark = (
-    SparkSession.builder
-    .appName("Phase3-Kafka-To-Spark")
+    SparkSession.builder.appName("Phase3-Kafka-To-Spark")
     .master("local[*]")
     .config("spark.jars.packages", "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.7")
     .config("spark.driver.memory", "2g")
@@ -49,13 +44,9 @@ spark = (
 
 spark.sparkContext.setLogLevel("WARN")
 
-print("=" * 60)
 print("PHASE 3: Kafka -> Spark Structured Streaming")
-print("=" * 60)
-print("SparkSession initialized!")
 
-# Doc streaming tu Kafka
-print("\nReading streaming data from Kafka topic: stock_ticks")
+# Read streaming from Kafka
 kafka_df = (
     spark.readStream.format("kafka")
     .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP_SERVERS)
@@ -79,16 +70,13 @@ stock_schema = StructType(
     ]
 )
 
-# Parse JSON tu Kafka value
+# Parse JSON from Kafka value
 parsed_df = kafka_df.select(
     from_json(col("value").cast("string"), stock_schema).alias("data")
 ).select("data.*")
 
-print("\nParsed DataFrame Schema:")
-parsed_df.printSchema()
-
-# Ghi ra console de xem du lieu streaming
-print("\nStarting streaming query to console...")
+# Write to console
+print("Starting streaming query to console...")
 print("Press Ctrl+C to stop.\n")
 
 query = (
